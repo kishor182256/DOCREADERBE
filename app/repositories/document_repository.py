@@ -23,3 +23,6 @@ class DocumentRepository:
 
     def get_by_id(self, document_id: int) -> Optional[Document]:
         return self.session.query(Document).filter(Document.id == document_id).first()
+
+    def list_all(self) -> list[Document]:
+        return self.session.query(Document).all()

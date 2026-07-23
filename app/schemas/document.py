@@ -1,12 +1,20 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
 class DocumentUploadResponse(BaseModel):
-    id: int
-    title: str
-    file_name: str
+    document_id: str
+    status: str
+    filename: str
+    size: int
     content_type: str
-    storage_path: str
+    checksum: str
+    created_at: datetime
+
+
+class DocumentResponse(DocumentUploadResponse):
+    updated_at: datetime
 
 
 class DocumentUploadRequest(BaseModel):

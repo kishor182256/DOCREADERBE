@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = ["*"]
     DATABASE_URL: str = "sqlite:///./app.db"
     UPLOAD_DIR: str = "uploads"
+    MAX_UPLOAD_SIZE_BYTES: int = 20 * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=".env",

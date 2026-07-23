@@ -1,5 +1,6 @@
 from app.services.extraction.aadhaar_extractor import AadhaarExtractor
 from app.services.extraction.base_extractor import BaseExtractor
+from app.services.extraction.invoice_extractor import InvoiceExtractor
 from app.services.extraction.null_extractor import NullExtractor
 
 
@@ -7,6 +8,7 @@ class ExtractorFactory:
     def __init__(self) -> None:
         self.extractors: dict[str, BaseExtractor] = {
             "AADHAAR_CARD": AadhaarExtractor(),
+            "INVOICE": InvoiceExtractor(),
         }
         self.null_extractor = NullExtractor()
 

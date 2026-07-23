@@ -71,5 +71,19 @@ class OcrResultRepository:
                 }
                 for word in result.words
             ],
+            "text_blocks": [
+                {
+                    "text": text_block.text,
+                    "bounding_box": {
+                        "x": text_block.bounding_box.x,
+                        "y": text_block.bounding_box.y,
+                        "width": text_block.bounding_box.width,
+                        "height": text_block.bounding_box.height,
+                    },
+                    "confidence": text_block.confidence,
+                    "page_number": text_block.page_number,
+                }
+                for text_block in result.text_blocks
+            ],
         }
         return json.dumps(payload, ensure_ascii=False)

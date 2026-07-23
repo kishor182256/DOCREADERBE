@@ -24,6 +24,20 @@ class DocumentResponse(DocumentUploadResponse):
     updated_at: datetime
 
 
+class BatchDocumentUploadItemResponse(BaseModel):
+    filename: str
+    success: bool
+    document: DocumentUploadResponse | None = None
+    error: str | None = None
+
+
+class BatchDocumentUploadResponse(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+    results: list[BatchDocumentUploadItemResponse]
+
+
 class OcrResultResponse(BaseModel):
     page_number: int
     text: str
@@ -32,6 +46,20 @@ class OcrResultResponse(BaseModel):
     ocr_engine: str
     result_json: dict[str, Any]
     created_at: datetime
+
+
+class BoundingBoxResponse(BaseModel):
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class TextBlockResponse(BaseModel):
+    text: str
+    bounding_box: BoundingBoxResponse
+    confidence: float
+    page_number: int
 
 
 class DocumentUploadRequest(BaseModel):

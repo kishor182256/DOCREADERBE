@@ -12,7 +12,9 @@ from app.core.config import settings
 from app.models.document import Document
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.ocr_result_repository import OcrResultRepository
+from app.repositories.ocr_text_block_repository import OcrTextBlockRepository
 from app.services.document_processing_service import DocumentProcessingService
+from app.services.structured_output_export_service import StructuredOutputExportService
 
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,8 @@ class DocumentService:
         self.session = session
         self.repository = DocumentRepository(session)
         self.ocr_result_repository = OcrResultRepository(session)
+        self.ocr_text_block_repository = OcrTextBlockRepository(session)
+        self.structured_output_export_service = StructuredOutputExportService()
 
     def _hash_bytes(self, data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()
@@ -94,11 +98,25 @@ class DocumentService:
         }
 
     def upload_document(self, *, title: str | None, file: UploadFile) -> dict[str, object]:
-        logger.info("Upload started filename=%s content_type=%s", file.filename, file.content_type)
+        return self.upload_document_bytes(
+            title=title,
+            file_name=file.filename or "uploaded_file",
+            content_type=file.content_type or "application/octet-stream",
+            file_bytes=file.file.read(),
+        )
 
-        file_name = Path(file.filename or "uploaded_file").name
-        file_bytes = file.file.read()
-        content_type = file.content_type or "application/octet-stream"
+    def upload_document_bytes(
+        self,
+        *,
+        title: str | None,
+        file_name: str,
+        content_type: str,
+        file_bytes: bytes,
+    ) -> dict[str, object]:
+        logger.info("Upload started filename=%s content_type=%s", file_name, content_type)
+
+        file_name = Path(file_name or "uploaded_file").name
+        content_type = content_type or "application/octet-stream"
         extension = self._validate_file(file_name=file_name, content_type=content_type, file_bytes=file_bytes)
         content_hash = self._hash_bytes(file_bytes)
 
@@ -112,6 +130,8 @@ class DocumentService:
                     duplicate_storage_path,
                 )
                 self.ocr_result_repository.delete_by_document_id(duplicate_document.document_id)
+                self.ocr_text_block_repository.delete_by_document_id(duplicate_document.document_id)
+                self.structured_output_export_service.delete(duplicate_document.document_id)
                 self.repository.delete(duplicate_document)
             else:
                 logger.info("Upload rejected duplicate filename=%s document_id=%s", file_name, duplicate_document.document_id)
@@ -182,6 +202,26 @@ class DocumentService:
             for result in self.ocr_result_repository.list_by_document_id(document_id)
         ]
 
+    def list_text_blocks(self, document_id: str) -> list[dict[str, object]]:
+        document = self.repository.get_by_document_id(document_id)
+        if document is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+        return [
+            {
+                "text": text_block.text,
+                "bounding_box": {
+                    "x": text_block.x,
+                    "y": text_block.y,
+                    "width": text_block.width,
+                    "height": text_block.height,
+                },
+                "confidence": text_block.confidence,
+                "page_number": text_block.page_number,
+            }
+            for text_block in self.ocr_text_block_repository.list_by_document_id(document_id)
+        ]
+
     def delete_document(self, document_id: str) -> None:
         document = self.repository.get_by_document_id(document_id)
         if document is None:
@@ -189,6 +229,8 @@ class DocumentService:
 
         storage_path = Path(document.storage_path)
         self.ocr_result_repository.delete_by_document_id(document.document_id)
+        self.ocr_text_block_repository.delete_by_document_id(document.document_id)
+        self.structured_output_export_service.delete(document.document_id)
         self.repository.delete(document)
         if storage_path.exists():
             try:

@@ -10,6 +10,7 @@ from app.database.base import Base
 from app.database.session import engine
 from app.models.document import Document
 from app.models.ocr_result import OcrResult
+from app.models.ocr_text_block import OcrTextBlock
 
 
 def init_db() -> None:

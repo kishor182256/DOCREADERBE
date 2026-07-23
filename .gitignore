@@ -13,3 +13,4 @@ dist/
 build/
 *.log
 uploads/
+structured_outputs/

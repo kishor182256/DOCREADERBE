@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session
 from app.models.document import Document
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.ocr_result_repository import OcrResultRepository
+from app.repositories.ocr_text_block_repository import OcrTextBlockRepository
 from app.services.classification import DocumentClassificationResult, DocumentClassificationService
 from app.services.extraction import ExtractionResult, ExtractorFactory
 from app.services.ocr import OCRResult, OCRService, TesseractOCRService
 from app.services.preprocessing import PreprocessedPage, PreprocessingService
 from app.services.processing_context import ProcessingContext
+from app.services.structured_output_export_service import StructuredOutputExportService
 
 
 logger = logging.getLogger(__name__)
@@ -26,10 +28,12 @@ class DocumentProcessingService:
     def __init__(self, session: Session) -> None:
         self.repository = DocumentRepository(session)
         self.ocr_result_repository = OcrResultRepository(session)
+        self.ocr_text_block_repository = OcrTextBlockRepository(session)
         self.preprocessing_service = PreprocessingService()
         self.ocr_service: OCRService = TesseractOCRService()
         self.classification_service = DocumentClassificationService()
         self.extractor_factory = ExtractorFactory()
+        self.structured_output_export_service = StructuredOutputExportService()
 
     def process(self, document_id: str) -> Document:
         logger.info("Document processing started document_id=%s", document_id)
@@ -47,6 +51,7 @@ class DocumentProcessingService:
             logger.info("Document processing received OCR results document_id=%s pages=%s", document.document_id, len(context.ocr_results))
 
             self._persist_ocr_results(context)
+            self._persist_text_blocks(context)
             context.document = self.repository.update_status(
                 context.document,
                 status=DOCUMENT_STATUS_OCR_COMPLETED,
@@ -83,6 +88,18 @@ class DocumentProcessingService:
             "OCR results persisted document_id=%s rows=%s",
             context.document.document_id,
             len(saved_results),
+        )
+
+    def _persist_text_blocks(self, context: ProcessingContext) -> None:
+        saved_blocks = self.ocr_text_block_repository.replace_for_document(
+            document_id=context.document.document_id,
+            ocr_results=context.ocr_results,
+            created_at=datetime.now(UTC),
+        )
+        logger.info(
+            "OCR text blocks persisted document_id=%s rows=%s",
+            context.document.document_id,
+            len(saved_blocks),
         )
 
     def _classify_document(self, context: ProcessingContext) -> DocumentClassificationResult:
@@ -140,19 +157,62 @@ class DocumentProcessingService:
         if extraction is None:
             return context.document
 
+        structured_payload = {
+            "document_id": context.document.document_id,
+            "document_type": extraction.document_type,
+            "confidence": extraction.confidence,
+            "fields": extraction.fields,
+            "raw_text": self._raw_text(context),
+            "pages": self._page_summaries(context),
+            "text_blocks": self._text_blocks(context),
+            "warnings": extraction.warnings,
+            "errors": extraction.errors,
+            "extractor": extraction.extractor,
+            "created_at": datetime.now(UTC).isoformat(),
+        }
+        output_path = self.structured_output_export_service.output_path(context.document.document_id)
+        structured_payload["output_file"] = str(output_path)
+        self.structured_output_export_service.export(
+            document_id=context.document.document_id,
+            payload=structured_payload,
+        )
+
         return self.repository.update_structured_data(
             context.document,
             extraction_confidence=extraction.confidence,
-            structured_data_json={
-                "document_id": context.document.document_id,
-                "document_type": extraction.document_type,
-                "confidence": extraction.confidence,
-                "fields": extraction.fields,
-                "warnings": extraction.warnings,
-                "errors": extraction.errors,
-                "extractor": extraction.extractor,
-                "created_at": datetime.now(UTC).isoformat(),
-            },
+            structured_data_json=structured_payload,
             status=DOCUMENT_STATUS_EXTRACTED,
             updated_at=datetime.now(UTC),
         )
+
+    def _raw_text(self, context: ProcessingContext) -> str:
+        return "\n\n".join(result.text for result in context.ocr_results if result.text.strip())
+
+    def _page_summaries(self, context: ProcessingContext) -> list[dict[str, object]]:
+        return [
+            {
+                "page_number": result.page_number,
+                "text": result.text,
+                "confidence": result.confidence,
+                "processing_time": result.processing_time,
+                "text_block_count": len(result.text_blocks),
+            }
+            for result in context.ocr_results
+        ]
+
+    def _text_blocks(self, context: ProcessingContext) -> list[dict[str, object]]:
+        return [
+            {
+                "page_number": text_block.page_number,
+                "text": text_block.text,
+                "confidence": text_block.confidence,
+                "bounding_box": {
+                    "x": text_block.bounding_box.x,
+                    "y": text_block.bounding_box.y,
+                    "width": text_block.bounding_box.width,
+                    "height": text_block.bounding_box.height,
+                },
+            }
+            for result in context.ocr_results
+            for text_block in result.text_blocks
+        ]

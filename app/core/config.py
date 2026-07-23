@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./app.db"
     UPLOAD_DIR: str = "uploads"
     MAX_UPLOAD_SIZE_BYTES: int = 20 * 1024 * 1024
+    TESSERACT_CMD: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

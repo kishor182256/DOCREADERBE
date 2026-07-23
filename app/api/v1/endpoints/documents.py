@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database.session import SessionLocal
-from app.schemas.document import DocumentResponse, DocumentUploadResponse
+from app.schemas.document import DocumentResponse, DocumentUploadResponse, OcrResultResponse
 from app.services.document_service import DocumentService
 
 router = APIRouter()
@@ -37,6 +37,12 @@ def list_documents(db: Session = Depends(get_db)) -> list[DocumentResponse]:
 def get_document(document_id: str, db: Session = Depends(get_db)) -> DocumentResponse:
     service = DocumentService(db)
     return DocumentResponse(**service.get_document(document_id))
+
+
+@router.get("/{document_id}/ocr-results", response_model=list[OcrResultResponse])
+def list_ocr_results(document_id: str, db: Session = Depends(get_db)) -> list[OcrResultResponse]:
+    service = DocumentService(db)
+    return [OcrResultResponse(**result) for result in service.list_ocr_results(document_id)]
 
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

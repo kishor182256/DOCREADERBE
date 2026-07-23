@@ -1,4 +1,5 @@
 import hashlib
+import json
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.document import Document
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.ocr_result_repository import OcrResultRepository
+from app.services.document_processing_service import DocumentProcessingService
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,7 @@ class DocumentService:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.repository = DocumentRepository(session)
+        self.ocr_result_repository = OcrResultRepository(session)
 
     def _hash_bytes(self, data: bytes) -> str:
         return hashlib.sha256(data).hexdigest()
@@ -80,6 +84,11 @@ class DocumentService:
             "size": document.size,
             "content_type": document.mime_type,
             "checksum": document.checksum,
+            "document_type": document.document_type,
+            "classification_confidence": document.classification_confidence,
+            "classification_json": json.loads(document.classification_json) if document.classification_json else None,
+            "extraction_confidence": document.extraction_confidence,
+            "structured_data_json": json.loads(document.structured_data_json) if document.structured_data_json else None,
             "created_at": document.created_at,
             "updated_at": document.updated_at,
         }
@@ -95,11 +104,21 @@ class DocumentService:
 
         duplicate_document = self.repository.get_by_checksum(content_hash)
         if duplicate_document is not None:
-            logger.info("Upload rejected duplicate filename=%s document_id=%s", file_name, duplicate_document.document_id)
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Already uploaded. Existing document id: {duplicate_document.document_id}.",
-            )
+            duplicate_storage_path = Path(duplicate_document.storage_path)
+            if not duplicate_storage_path.exists():
+                logger.warning(
+                    "Removing stale duplicate metadata document_id=%s missing_path=%s",
+                    duplicate_document.document_id,
+                    duplicate_storage_path,
+                )
+                self.ocr_result_repository.delete_by_document_id(duplicate_document.document_id)
+                self.repository.delete(duplicate_document)
+            else:
+                logger.info("Upload rejected duplicate filename=%s document_id=%s", file_name, duplicate_document.document_id)
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Already uploaded. Existing document id: {duplicate_document.document_id}.",
+                )
 
         now = datetime.now(UTC)
         upload_dir = self._dated_upload_dir(now)
@@ -132,7 +151,9 @@ class DocumentService:
         )
         logger.info("Upload completed document_id=%s filename=%s size=%s", document.document_id, document.original_name, document.size)
 
-        return self._to_upload_response(document)
+        processed_document = DocumentProcessingService(self.session).process(document.document_id)
+
+        return self._to_upload_response(processed_document)
 
     def list_documents(self) -> list[dict[str, object]]:
         return [self._to_upload_response(document) for document in self.repository.list_all()]
@@ -143,15 +164,36 @@ class DocumentService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
         return self._to_upload_response(document)
 
+    def list_ocr_results(self, document_id: str) -> list[dict[str, object]]:
+        document = self.repository.get_by_document_id(document_id)
+        if document is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+        return [
+            {
+                "page_number": result.page_number,
+                "text": result.text,
+                "confidence": result.confidence,
+                "processing_time": result.processing_time,
+                "ocr_engine": result.ocr_engine,
+                "result_json": json.loads(result.result_json),
+                "created_at": result.created_at,
+            }
+            for result in self.ocr_result_repository.list_by_document_id(document_id)
+        ]
+
     def delete_document(self, document_id: str) -> None:
         document = self.repository.get_by_document_id(document_id)
         if document is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
 
         storage_path = Path(document.storage_path)
+        self.ocr_result_repository.delete_by_document_id(document.document_id)
         self.repository.delete(document)
         if storage_path.exists():
             try:
                 storage_path.unlink()
             except OSError:
                 logger.warning("Could not delete stored file path=%s", storage_path)
+        else:
+            logger.warning("Stored file already missing during delete document_id=%s path=%s", document.document_id, storage_path)

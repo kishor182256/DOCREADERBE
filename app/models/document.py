@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -20,6 +20,11 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     checksum: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    document_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    classification_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    classification_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    structured_data_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

@@ -1,4 +1,5 @@
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -8,11 +9,13 @@ from sqlalchemy import text
 from app.database.base import Base
 from app.database.session import engine
 from app.models.document import Document
+from app.models.ocr_result import OcrResult
 
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     migrate_documents_table_for_phase_2()
+    migrate_ocr_results_table_for_json_payload()
 
 
 def migrate_documents_table_for_phase_2() -> None:
@@ -32,6 +35,11 @@ def migrate_documents_table_for_phase_2() -> None:
             "size": "INTEGER",
             "status": "TEXT",
             "checksum": "TEXT",
+            "document_type": "TEXT",
+            "classification_confidence": "REAL",
+            "classification_json": "TEXT",
+            "extraction_confidence": "REAL",
+            "structured_data_json": "TEXT",
             "created_at": "DATETIME",
             "updated_at": "DATETIME",
         }
@@ -100,4 +108,48 @@ def migrate_documents_table_for_phase_2() -> None:
                     "created_at": now,
                     "updated_at": now,
                 },
+            )
+
+
+def migrate_ocr_results_table_for_json_payload() -> None:
+    if engine.url.get_backend_name() != "sqlite":
+        return
+
+    with engine.begin() as connection:
+        table_exists = connection.execute(
+            text("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ocr_results'")
+        ).fetchone()
+        if table_exists is None:
+            return
+
+        existing_columns = {
+            row[1] for row in connection.execute(text("PRAGMA table_info(ocr_results)")).fetchall()
+        }
+        if "result_json" not in existing_columns:
+            connection.execute(text("ALTER TABLE ocr_results ADD COLUMN result_json TEXT"))
+
+        rows = connection.execute(
+            text(
+                """
+                SELECT id, document_id, page_number, text, confidence, processing_time, ocr_engine, created_at
+                FROM ocr_results
+                WHERE result_json IS NULL
+                """
+            )
+        ).mappings().all()
+
+        for row in rows:
+            payload = {
+                "document_id": row["document_id"],
+                "page_number": row["page_number"],
+                "text": row["text"],
+                "confidence": row["confidence"],
+                "processing_time": row["processing_time"],
+                "ocr_engine": row["ocr_engine"],
+                "created_at": row["created_at"],
+                "words": [],
+            }
+            connection.execute(
+                text("UPDATE ocr_results SET result_json = :result_json WHERE id = :id"),
+                {"id": row["id"], "result_json": json.dumps(payload, ensure_ascii=False)},
             )
